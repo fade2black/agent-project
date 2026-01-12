@@ -24,7 +24,7 @@ impl UdpTransport {
         })
     }
 
-    pub async fn new_recv(listen_port: u16) -> Result<Self, TransportError> {
+    pub async fn new_receiver(listen_port: u16) -> Result<Self, TransportError> {
         let sock = UdpSocket::bind(("0.0.0.0", listen_port)).await?;
         let framed = UdpFramed::new(sock, LengthDelimitedCodec::new());
 
