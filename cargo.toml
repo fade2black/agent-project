@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "transport",
+    "udp-transport",
+]
+
+resolver = "3"
