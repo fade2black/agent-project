@@ -2,6 +2,7 @@
 members = [
     "transport",
     "udp-transport",
+    "bin/multi_agent_transport_demo"
 ]
 
 resolver = "3"
