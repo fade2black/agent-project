@@ -1,0 +1,19 @@
+networks:
+  agent-net:
+    driver: bridge
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: bin/multi_agent_transport_demo/Dockerfile
+      target: final
+    environment:
+      BROADCAST_PORT: 4000
+      BROADCAST_INTERVAL: 10
+    networks:
+      - agent-net
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: none
