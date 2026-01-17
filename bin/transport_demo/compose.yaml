@@ -6,7 +6,7 @@ services:
   agent:
     build:
       context: ../..
-      dockerfile: bin/multi_agent_transport_demo/Dockerfile
+      dockerfile: bin/transport_demo/Dockerfile
       target: final
     environment:
       BROADCAST_PORT: 4000

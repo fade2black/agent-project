@@ -3,7 +3,9 @@ use futures::{SinkExt, StreamExt};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::UdpSocket;
 use tokio_util::{codec::LengthDelimitedCodec, udp::UdpFramed};
-use transport::{Transport, TransportError};
+use transport::Transport;
+
+pub use transport::TransportError;
 
 pub struct UdpTransport {
     framed: UdpFramed<LengthDelimitedCodec>,

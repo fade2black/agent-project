@@ -1,0 +1,19 @@
+networks:
+  agent-net:
+    driver: bridge
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: bin/discovery_demo/Dockerfile
+      target: final
+    environment:
+      DISCOVERY_PORT: 4000
+      DISCOVERY_INTERVAL: 10
+    networks:
+      - agent-net
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: none
