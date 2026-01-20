@@ -13,7 +13,3 @@ services:
       BROADCAST_INTERVAL: 10
     networks:
       - agent-net
-    deploy:
-      replicas: 5
-      restart_policy:
-        condition: none

@@ -1,18 +1,16 @@
-use super::ByteSerializable;
-use crate::SerializationError;
+use super::{RmpSerializable, SerializationError};
 use bytes::Bytes;
 use rmp_serde::Serializer;
 use serde::{Deserialize, Serialize};
 
-/// Implement ByteSerializable for any type that supports `rmp_serde` serialization
-impl<T> ByteSerializable for T
+/// Implements RmpSerializable for any type that supports `rmp_serde` serialization
+impl<T> RmpSerializable for T
 where
     T: Serialize + for<'de> Deserialize<'de>,
 {
     fn to_bytes(&self) -> Result<Bytes, SerializationError> {
         let mut vector = Vec::new();
-        self.serialize(&mut Serializer::new(&mut vector))
-            .map_err(|_| SerializationError::GenericError)?;
+        self.serialize(&mut Serializer::new(&mut vector))?;
         Ok(Bytes::from(vector))
     }
 
@@ -20,6 +18,6 @@ where
     where
         Self: Sized,
     {
-        rmp_serde::decode::from_slice(bytes).map_err(|_| SerializationError::GenericError)
+        rmp_serde::decode::from_slice(bytes).map_err(SerializationError::Decode)
     }
 }
