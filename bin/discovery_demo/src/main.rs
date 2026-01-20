@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::env;
 use std::sync::Arc;
 use tracing::info;
-use udp_discovery::UdpDiscovery;
+use udp_discovery::{Config, UdpDiscovery};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,10 +11,19 @@ async fn main() -> Result<()> {
     info!("Starting discovery process...");
 
     let port: u16 = get_env_var("DISCOVERY_PORT")?;
-    let interval_secs: u64 = get_env_var("DISCOVERY_INTERVAL")?;
+    let interval_sec: u64 = get_env_var("DISCOVERY_INTERVAL")?;
     let agent_id: u32 = get_env_var("AGENT_ID")?;
+    let agent_ttl_sec: u64 = get_env_var("AGENT_TTL")?;
+    let agent_cleanup_interval_sec: u64 = get_env_var("AGENT_CLEANUP_INTERVAL")?;
 
-    let service = Arc::new(UdpDiscovery::new(agent_id, interval_secs, port));
+    let config = Config::new(
+        interval_sec,
+        port,
+        agent_ttl_sec,
+        agent_cleanup_interval_sec,
+    );
+
+    let service = Arc::new(UdpDiscovery::new(agent_id, config));
     service.start().await;
 
     // For graceful shutdown

@@ -11,9 +11,7 @@ services:
     environment:
       DISCOVERY_PORT: 4000
       DISCOVERY_INTERVAL: 10
+      AGENT_TTL: 60
+      AGENT_CLEANUP_INTERVAL: 10
     networks:
       - agent-net
-    deploy:
-      replicas: 5
-      restart_policy:
-        condition: none
