@@ -1,5 +1,4 @@
-use crate::agents;
-use crate::agents::AgentsResponse;
+use crate::agents::{self, AgentsResponse};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
@@ -37,6 +36,7 @@ impl HttpServer {
         let app = Router::new()
             .route("/up", get(|| async { "OK" }))
             .route("/agents", get(agents_action))
+            .route("/discovery-config", get(discovery_config_action))
             .with_state(state);
 
         let addr = format!("0.0.0.0:{}", self.port);
@@ -57,6 +57,12 @@ async fn agents_action(
     } else {
         Err(bad_request("Unable to fetch agents."))
     }
+}
+
+async fn discovery_config_action(
+    State(state): State<AgentState>,
+) -> Result<Json<udp_discovery::Config>, ErrorResponse> {
+    Ok(Json(*state.discovery.get_config()))
 }
 
 fn bad_request(msg: &str) -> ErrorResponse {

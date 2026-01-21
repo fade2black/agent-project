@@ -9,3 +9,7 @@ This project is a framework for building and testing multi-agent systems. For no
 * **Security**: Integration of secure communication using the Noise protocol for encrypted data exchange.
 
 Work in progess.
+
+# Notes
+
+1. Different agents may temporarily disagree on the alive set due to UDP loss and timing.
