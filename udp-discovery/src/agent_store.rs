@@ -1,9 +1,10 @@
 use common::time::now;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use tracing::info;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct AgentEntry {
     id: u32,
     addr: IpAddr,

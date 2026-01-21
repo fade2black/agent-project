@@ -1,4 +1,7 @@
-use agent_store::{AgentEntry, AgentStore};
+pub mod agent_store;
+
+pub use agent_store::AgentEntry;
+use agent_store::AgentStore;
 use common::RmpSerializable;
 use if_addrs::{IfAddr, get_if_addrs};
 use serde::{Deserialize, Serialize};
@@ -9,8 +12,6 @@ use tokio::{sync::Mutex, task::JoinSet, time::Duration};
 use tracing::{error, info};
 use transport::Transport;
 use udp_transport::UdpTransport;
-
-mod agent_store;
 
 const MAX_HEARTBEAT_SIZE: usize = 256;
 
@@ -77,7 +78,8 @@ impl UdpDiscovery {
         }
     }
 
-    pub async fn alive_agents(&self, ttl: u64) -> Vec<AgentEntry> {
+    pub async fn get_alive_agents(&self) -> Vec<AgentEntry> {
+        let ttl = self.config.agent_ttl_sec;
         let store = self.agent_store.lock().await;
         store.get_alive_agents(ttl)
     }

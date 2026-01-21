@@ -11,7 +11,8 @@ services:
     environment:
       DISCOVERY_PORT: 4000
       DISCOVERY_INTERVAL: 10
-      AGENT_TTL: 60
-      AGENT_CLEANUP_INTERVAL: 10
+      AGENT_TTL: 30
+      AGENT_CLEANUP_INTERVAL: 5
+      HTTP_PORT: 8080
     networks:
       - agent-net
