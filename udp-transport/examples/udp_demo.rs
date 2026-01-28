@@ -16,7 +16,7 @@ async fn main() -> Result<(), transport::TransportError> {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 1024];
         loop {
-            if let Ok(Some(len)) = receiver.recv(&mut buf).await {
+            if let Ok(len) = receiver.recv(&mut buf).await {
                 println!("Received: {:?}", &buf[..len]);
             }
         }

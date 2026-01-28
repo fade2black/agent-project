@@ -4,8 +4,9 @@ use if_addrs::{IfAddr, get_if_addrs};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::sync::RwLock;
 use thiserror::Error;
-use tokio::{sync::Mutex, task::JoinSet, time::Duration};
+use tokio::{task::JoinSet, time::Duration};
 use tracing::{error, info};
 use transport::Transport;
 use udp_transport::UdpTransport;
@@ -61,12 +62,12 @@ impl Config {
 pub struct UdpDiscovery {
     agent_id: u32,
     config: Config,
-    agent_store: Arc<Mutex<AgentStore>>,
+    agent_store: Arc<RwLock<AgentStore>>,
 }
 
 impl UdpDiscovery {
     pub fn new(agent_id: u32, config: Config) -> Self {
-        let agent_store = Arc::new(Mutex::new(AgentStore::new()));
+        let agent_store = Arc::new(RwLock::new(AgentStore::new()));
 
         Self {
             agent_id,
@@ -79,20 +80,29 @@ impl UdpDiscovery {
         &self.config
     }
 
-    pub async fn get_alive_agents(&self) -> Vec<AgentEntry> {
+    pub fn get_alive_agents(&self) -> Vec<AgentEntry> {
         let ttl = self.config.agent_ttl_sec;
-        let store = self.agent_store.lock().await;
+        let store = self
+            .agent_store
+            .read()
+            .expect("Failed to lock AgentStore for read.");
         store.get_alive_agents(ttl)
     }
 
-    pub async fn add_agent(&self, agent_id: u32, addr: IpAddr) {
-        let mut store = self.agent_store.lock().await;
+    async fn add_agent(&self, agent_id: u32, addr: IpAddr) {
+        let mut store = self
+            .agent_store
+            .write()
+            .expect("Failed to lock AgentStore for write.");
         store.insert(agent_id, addr);
     }
 
-    pub async fn cleanup(&self) {
+    async fn cleanup(&self) {
         let ttl = self.config.agent_ttl_sec;
-        let mut store = self.agent_store.lock().await;
+        let mut store = self
+            .agent_store
+            .write()
+            .expect("Failed to lock AgentStore for write.");
 
         store.cleanup(ttl);
     }
@@ -147,19 +157,16 @@ async fn recv_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), Discove
 
     info!("Starting receiving heartbeat task...");
     loop {
-        match receiver.recv(&mut buffer).await? {
-            Some(size) => {
-                let msg = HeartbeatMessage::from_bytes(&buffer[..size])?;
+        if let Ok(size) = receiver.recv(&mut buffer).await {
+            let msg = HeartbeatMessage::from_bytes(&buffer[..size])?;
+            if msg.agent_id != discovery.agent_id {
+                info!("Received heartbeat {} bytes from {}", size, msg.agent_id);
 
-                if msg.agent_id != discovery.agent_id {
-                    info!("Received heartbeat {} bytes from {}", size, msg.agent_id);
-                    discovery.add_agent(msg.agent_id, msg.addr).await;
-                }
+                discovery.add_agent(msg.agent_id, msg.addr).await;
             }
-            None => {
-                info!("No packets received.");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
+        } else {
+            info!("No packets received.");
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 }

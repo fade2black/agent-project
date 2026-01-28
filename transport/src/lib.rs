@@ -10,11 +10,14 @@ pub enum TransportError {
     #[error("buffer too small")]
     BufferTooSmall,
 
+    #[error("transport is closed")]
+    Closed,
+
     #[error("transport is not configured as sender")]
     NotSender,
 }
 
 pub trait Transport {
     async fn send(&mut self, bytes: &[u8]) -> Result<(), TransportError>;
-    async fn recv(&mut self, buffer: &mut [u8]) -> Result<Option<usize>, TransportError>;
+    async fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, TransportError>;
 }

@@ -11,7 +11,7 @@ pub(super) struct AgentsResponse {
 pub(super) async fn handler(
     state: &AgentState,
 ) -> Result<AgentsResponse, Box<dyn std::error::Error>> {
-    let agents = state.discovery.get_alive_agents().await;
+    let agents = state.discovery.get_alive_agents();
     let agents_count = agents.len();
 
     Ok(AgentsResponse {

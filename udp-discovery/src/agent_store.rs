@@ -30,14 +30,14 @@ pub(crate) struct AgentStore {
 }
 
 impl AgentStore {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         AgentStore {
             store: HashMap::new(),
         }
     }
 
     // Cleanup expired sessions
-    pub fn cleanup(&mut self, ttl: u64) {
+    pub(crate) fn cleanup(&mut self, ttl: u64) {
         self.store.retain(|_, agent| agent.is_alive(ttl));
 
         info!(
@@ -46,14 +46,14 @@ impl AgentStore {
         );
     }
 
-    pub fn insert(&mut self, agent_id: u32, addr: IpAddr) {
+    pub(crate) fn insert(&mut self, agent_id: u32, addr: IpAddr) {
         let agent = AgentEntry::new(agent_id, addr, now());
         self.store.insert(agent_id, agent);
 
         info!("Agent with id {agent_id} added.");
     }
 
-    pub fn get_alive_agents(&self, ttl: u64) -> Vec<AgentEntry> {
+    pub(crate) fn get_alive_agents(&self, ttl: u64) -> Vec<AgentEntry> {
         self.store
             .values()
             .filter(|agent| agent.is_alive(ttl))

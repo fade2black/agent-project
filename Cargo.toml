@@ -4,6 +4,7 @@ members = [
     "udp-discovery",
     "udp-transport",
     "state-server",
+    "cbba",
     "bin/transport_demo",
     "bin/discovery_demo",
     "common"]

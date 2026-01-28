@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
         info!("Starting receiver task...");
         let mut buf = vec![0u8; BUFFER_SIZE];
         loop {
-            if let Ok(Some(len)) = receiver.recv(&mut buf).await {
+            if let Ok(len) = receiver.recv(&mut buf).await {
                 info!("Received: {:?}", &buf[..len]);
             }
         }

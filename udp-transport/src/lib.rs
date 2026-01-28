@@ -46,16 +46,18 @@ impl Transport for UdpTransport {
         Ok(())
     }
 
-    async fn recv(&mut self, buffer: &mut [u8]) -> Result<Option<usize>, TransportError> {
-        if let Some((bytes, _addr)) = self.framed.next().await.transpose()? {
-            if buffer.len() < bytes.len() {
-                return Err(TransportError::BufferTooSmall);
-            }
+    async fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, TransportError> {
+        match self.framed.next().await {
+            Some(Ok((bytes, _addr))) => {
+                if buffer.len() < bytes.len() {
+                    return Err(TransportError::BufferTooSmall);
+                }
 
-            buffer[..bytes.len()].copy_from_slice(&bytes);
-            Ok(Some(bytes.len()))
-        } else {
-            Ok(None)
+                buffer[..bytes.len()].copy_from_slice(&bytes);
+                Ok(bytes.len())
+            }
+            Some(Err(e)) => Err(e.into()),
+            None => Err(TransportError::Closed),
         }
     }
 }
