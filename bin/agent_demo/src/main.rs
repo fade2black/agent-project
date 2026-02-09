@@ -1,5 +1,6 @@
-use agent_state::AgentStore;
+use agent_state::{AgentStore, TaskStore};
 use anyhow::Result;
+use state_server::StateServerContext;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
@@ -9,14 +10,30 @@ use tracing::info;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    info!("Starting discovery process...");
+    info!("Agent starting...");
 
+    let task_store = Arc::new(RwLock::new(TaskStore::new()));
     let agent_store = Arc::new(RwLock::new(AgentStore::new()));
+
+    let state = StateServerContext {
+        task_store: task_store.clone(),
+        agent_store: agent_store.clone(),
+    };
 
     let mut tasks = JoinSet::<Result<()>>::new();
 
     tasks.spawn(async move {
         udp_discovery::start(agent_store).await;
+        Ok(())
+    });
+
+    tasks.spawn(async move {
+        control_server::start(task_store).await?;
+        Ok(())
+    });
+
+    tasks.spawn(async move {
+        state_server::start(state).await?;
         Ok(())
     });
 

@@ -1,0 +1,8 @@
+agent_id: 1111
+winners:
+  - task_id: 2222
+    agent_id: 5555
+    bid: 12345.6643
+  - task_id: 3333
+    agent_id: 6666
+    bid: 23451.42342

@@ -1,11 +1,11 @@
-use crate::agent_store::{AgentEntry, AgentStore};
+use agent_state::{AgentStore, Config};
 use common::RmpSerializable;
 use if_addrs::{IfAddr, get_if_addrs};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::RwLock;
 use thiserror::Error;
+use tokio::sync::RwLock;
 use tokio::{task::JoinSet, time::Duration};
 use tracing::{error, info};
 use transport::Transport;
@@ -35,110 +35,37 @@ impl HeartbeatMessage {
     }
 }
 
-#[derive(Clone, Copy, Serialize)]
-pub struct Config {
-    interval_sec: u64,
-    port: u16,
-    agent_ttl_sec: u64,
-    agent_cleanup_interval_sec: u64,
-}
+pub async fn start(agent_store: Arc<RwLock<AgentStore>>) {
+    let mut tasks = JoinSet::new();
 
-impl Config {
-    pub fn new(
-        interval_sec: u64,
-        port: u16,
-        agent_ttl_sec: u64,
-        agent_cleanup_interval_sec: u64,
-    ) -> Self {
-        Self {
-            interval_sec,
-            port,
-            agent_ttl_sec,
-            agent_cleanup_interval_sec,
+    tasks.spawn(send_heartbeat_task());
+    tasks.spawn(recv_heartbeat_task(agent_store.clone()));
+    tasks.spawn(cleanup_task(agent_store));
+
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(Err(e)) => error!("Error in task: {}", e),
+            Ok(Ok(())) => info!("Heartbeat task completed successfully"),
+            Err(e) => error!("Task panicked: {}", e),
         }
     }
 }
 
-pub struct UdpDiscovery {
-    agent_id: u32,
-    config: Config,
-    agent_store: Arc<RwLock<AgentStore>>,
-}
-
-impl UdpDiscovery {
-    pub fn new(agent_id: u32, config: Config) -> Self {
-        let agent_store = Arc::new(RwLock::new(AgentStore::new()));
-
-        Self {
-            agent_id,
-            config,
-            agent_store,
-        }
-    }
-
-    pub fn get_config(&self) -> &Config {
-        &self.config
-    }
-
-    pub fn get_alive_agents(&self) -> Vec<AgentEntry> {
-        let ttl = self.config.agent_ttl_sec;
-        let store = self
-            .agent_store
-            .read()
-            .expect("Failed to lock AgentStore for read.");
-        store.get_alive_agents(ttl)
-    }
-
-    async fn add_agent(&self, agent_id: u32, addr: IpAddr) {
-        let mut store = self
-            .agent_store
-            .write()
-            .expect("Failed to lock AgentStore for write.");
-        store.insert(agent_id, addr);
-    }
-
-    async fn cleanup(&self) {
-        let ttl = self.config.agent_ttl_sec;
-        let mut store = self
-            .agent_store
-            .write()
-            .expect("Failed to lock AgentStore for write.");
-
-        store.cleanup(ttl);
-    }
-
-    pub async fn start(self: Arc<Self>) {
-        let mut tasks = JoinSet::new();
-
-        tasks.spawn(send_heartbeat_task(self.clone()));
-        tasks.spawn(recv_heartbeat_task(self.clone()));
-        tasks.spawn(cleanup_task(self.clone()));
-
-        while let Some(res) = tasks.join_next().await {
-            match res {
-                Ok(Err(e)) => error!("Error in task: {}", e),
-                Ok(Ok(())) => info!("Heartbeat task completed successfully"),
-                Err(e) => error!("Task panicked: {}", e),
-            }
-        }
-    }
-}
-
-async fn send_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), DiscoveryError> {
-    let config = discovery.config;
+async fn send_heartbeat_task() -> Result<(), DiscoveryError> {
+    let config = Config::new();
 
     let ips = retrieve_usable_ips()?;
-    let duration = Duration::from_secs(config.interval_sec);
-    let mut sender = UdpTransport::new_sender(config.port).await?;
+    let duration = Duration::from_secs(config.discovery_interval);
+    let mut sender = UdpTransport::new_sender(config.discovery_port).await?;
 
     info!("Starting sending heartbeat task...");
     info!(
         "Port {}, Interval: {} seconds.",
-        config.port, config.interval_sec
+        config.discovery_port, config.discovery_interval
     );
 
     loop {
-        let msg = HeartbeatMessage::new(discovery.agent_id, ips[0]);
+        let msg = HeartbeatMessage::new(config.agent_id, ips[0]);
         let bytes = msg.to_bytes()?;
 
         // TODO: specific error handling for send() could be beneficial for debuging
@@ -149,8 +76,11 @@ async fn send_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), Discove
     }
 }
 
-async fn recv_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), DiscoveryError> {
-    let port = discovery.config.port;
+async fn recv_heartbeat_task(agent_store: Arc<RwLock<AgentStore>>) -> Result<(), DiscoveryError> {
+    let config = Config::new();
+
+    let port = config.discovery_port;
+    let agent_id = config.agent_id;
 
     let mut receiver = UdpTransport::new_receiver(port).await?;
     let mut buffer = [0u8; MAX_HEARTBEAT_SIZE];
@@ -159,11 +89,14 @@ async fn recv_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), Discove
     loop {
         if let Ok(size) = receiver.recv(&mut buffer).await {
             let msg = HeartbeatMessage::from_bytes(&buffer[..size])?;
-            if msg.agent_id != discovery.agent_id {
-                info!("Received heartbeat {} bytes from {}", size, msg.agent_id);
 
-                discovery.add_agent(msg.agent_id, msg.addr).await;
+            if msg.agent_id == agent_id {
+                continue;
             }
+            info!("Received heartbeat {} bytes from {}", size, msg.agent_id);
+
+            let mut store = agent_store.write().await;
+            store.insert(msg.agent_id, msg.addr);
         } else {
             info!("No packets received.");
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -171,15 +104,18 @@ async fn recv_heartbeat_task(discovery: Arc<UdpDiscovery>) -> Result<(), Discove
     }
 }
 
-async fn cleanup_task(discovery: Arc<UdpDiscovery>) -> Result<(), DiscoveryError> {
-    let interval = discovery.config.agent_cleanup_interval_sec;
+async fn cleanup_task(agent_store: Arc<RwLock<AgentStore>>) -> Result<(), DiscoveryError> {
+    let config = Config::new();
+
+    let interval = config.agent_cleanup_interval;
     let duration = Duration::from_secs(interval);
 
     info!("Starting agent store cleanup task...");
 
     loop {
         tokio::time::sleep(duration).await;
-        discovery.cleanup().await;
+        let mut store = agent_store.write().await;
+        store.cleanup();
     }
 }
 

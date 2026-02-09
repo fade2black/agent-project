@@ -1,14 +1,17 @@
 use crate::agents::{self, AgentsResponse};
+use crate::tasks::{self, TasksResponse};
+use agent_state::{AgentStore, Config, TaskStore};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::RwLock;
 use tracing::info;
-use udp_discovery::UdpDiscovery;
 
 #[derive(Clone)]
-pub(crate) struct AgentState {
-    pub discovery: Arc<UdpDiscovery>,
+pub struct StateServerContext {
+    pub agent_store: Arc<RwLock<AgentStore>>,
+    pub task_store: Arc<RwLock<TaskStore>>,
 }
 
 #[derive(Debug, Error)]
@@ -21,36 +24,27 @@ pub enum StateServerError {
 struct ErrorMessage(String);
 type ErrorResponse = (StatusCode, Json<ErrorMessage>);
 
-pub struct HttpServer {
-    port: u16,
-}
+pub async fn start(state: StateServerContext) -> Result<(), StateServerError> {
+    let config = Config::new();
 
-impl HttpServer {
-    pub fn new(port: u16) -> Self {
-        HttpServer { port }
-    }
+    let app = Router::new()
+        .route("/up", get(|| async { "OK" }))
+        .route("/agents", get(agents_action))
+        .route("/tasks", get(tasks_action))
+        .route("/config", get(config_action))
+        .with_state(state);
 
-    pub async fn run(self, discovery: Arc<UdpDiscovery>) -> Result<(), StateServerError> {
-        let state = AgentState { discovery };
+    let addr = format!("0.0.0.0:{}", config.http_port);
+    let listener = tokio::net::TcpListener::bind(addr.clone()).await?;
 
-        let app = Router::new()
-            .route("/up", get(|| async { "OK" }))
-            .route("/agents", get(agents_action))
-            .route("/discovery-config", get(discovery_config_action))
-            .with_state(state);
+    info!("Starting HTTP server on {} ...", addr);
+    axum::serve(listener, app).await?;
 
-        let addr = format!("0.0.0.0:{}", self.port);
-        let listener = tokio::net::TcpListener::bind(addr.clone()).await?;
-
-        info!("Starting HTTP server on {} ...", addr);
-        axum::serve(listener, app).await?;
-
-        Ok(())
-    }
+    Ok(())
 }
 
 async fn agents_action(
-    State(state): State<AgentState>,
+    State(state): State<StateServerContext>,
 ) -> Result<Json<AgentsResponse>, ErrorResponse> {
     if let Ok(agents) = agents::handler(&state).await {
         Ok(Json(agents))
@@ -59,10 +53,18 @@ async fn agents_action(
     }
 }
 
-async fn discovery_config_action(
-    State(state): State<AgentState>,
-) -> Result<Json<udp_discovery::Config>, ErrorResponse> {
-    Ok(Json(*state.discovery.get_config()))
+async fn tasks_action(
+    State(state): State<StateServerContext>,
+) -> Result<Json<TasksResponse>, ErrorResponse> {
+    if let Ok(tasks) = tasks::handler(&state).await {
+        Ok(Json(tasks))
+    } else {
+        Err(bad_request("Unable to fetch tasks."))
+    }
+}
+
+async fn config_action() -> Result<Json<Config>, ErrorResponse> {
+    Ok(Json(Config::new()))
 }
 
 fn bad_request(msg: &str) -> ErrorResponse {

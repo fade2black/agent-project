@@ -6,7 +6,7 @@ services:
   agent:
     build:
       context: ../..
-      dockerfile: bin/discovery_demo/Dockerfile
+      dockerfile: bin/agent_demo/Dockerfile
       target: final
     environment:
       AGENT_TTL: 30
@@ -19,3 +19,17 @@ services:
       HTTP_PORT: 8080
     networks:
       - agent-net
+  cli:
+    container_name: agent-cli
+    build:
+      context: ../..
+      dockerfile: bin/agent_demo/cli.Dockerfile
+    environment:
+      CBBA_PORT: 4005
+      COMMAND_CONTROL_PORT: 5000
+    networks:
+      - agent-net
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./samples:/samples

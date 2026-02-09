@@ -1,12 +1,12 @@
 use crate::task::TaskId;
 use std::collections::HashSet;
 
-pub(crate) struct Bundle {
+pub struct Bundle {
     tasks: HashSet<TaskId>,
 }
 
 impl Bundle {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             tasks: HashSet::new(),
         }

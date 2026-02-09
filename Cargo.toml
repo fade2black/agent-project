@@ -4,9 +4,12 @@ members = [
     "udp-discovery",
     "udp-transport",
     "state-server",
+    "control-server",
     "cbba",
+    "cli",
     "bin/transport_demo",
     "bin/discovery_demo",
-    "common"]
+    "bin/agent_demo",
+    "common", "agent-state"]
 
 resolver = "3"

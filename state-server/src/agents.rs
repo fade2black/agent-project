@@ -1,6 +1,6 @@
-use crate::server::AgentState;
+use crate::server::{StateServerContext, StateServerError};
+use agent_state::AgentEntry;
 use serde::Serialize;
-use udp_discovery::AgentEntry;
 
 #[derive(Serialize)]
 pub(super) struct AgentsResponse {
@@ -9,9 +9,10 @@ pub(super) struct AgentsResponse {
 }
 
 pub(super) async fn handler(
-    state: &AgentState,
-) -> Result<AgentsResponse, Box<dyn std::error::Error>> {
-    let agents = state.discovery.get_alive_agents();
+    state: &StateServerContext,
+) -> Result<AgentsResponse, StateServerError> {
+    let agent_store = state.agent_store.read().await;
+    let agents = agent_store.get_alive_agents();
     let agents_count = agents.len();
 
     Ok(AgentsResponse {

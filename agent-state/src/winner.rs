@@ -25,12 +25,12 @@ impl Winner {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct CbbaGossip {
+pub struct CbbaGossip {
     pub agent_id: u32,
     pub winners: Vec<Winner>,
 }
 
-pub(crate) struct Winners {
+pub struct Winners {
     winners: HashMap<TaskId, Winner>,
 }
 
@@ -41,12 +41,12 @@ impl Winners {
         }
     }
 
-    pub(crate) fn to_gossip(&self, agent_id: u32) -> CbbaGossip {
+    pub fn to_gossip(&self, agent_id: u32) -> CbbaGossip {
         let winners = self.winners.values().cloned().collect();
         CbbaGossip { agent_id, winners }
     }
 
-    pub(crate) fn init(&mut self, agent_id: u32, bids: HashMap<u32, f64>) {
+    pub fn init(&mut self, agent_id: u32, bids: HashMap<u32, f64>) {
         self.winners.clear();
 
         for (task_id, bid) in bids {
@@ -55,7 +55,7 @@ impl Winners {
         }
     }
 
-    pub(crate) fn get(&self, task_id: TaskId) -> Option<&Winner> {
+    pub fn get(&self, task_id: TaskId) -> Option<&Winner> {
         self.winners.get(&task_id)
     }
 

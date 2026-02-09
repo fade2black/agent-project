@@ -1,0 +1,37 @@
+tasks:
+  - id: 1111111
+    description: "Task 1"
+    priority: 1
+    location:
+      lat: 52.844746455
+      lon: 13.022233316
+  - id: 2222222
+    description: "Task 2"
+    priority: 3
+    location:
+      lat: 52.584746455
+      lon: -13.419647316
+  - id: 3333333
+    description: "Task 3"
+    priority: 1
+    location:
+      lat: 52.544629541
+      lon: 13.439536322
+  - id: 4444444
+    description: "Task 4"
+    priority: 2
+    location:
+      lat: 52.543716455
+      lon: -13.448847913
+  - id: 5555555
+    description: "Task 5"
+    priority: 8
+    location:
+      lat: 52.043706455
+      lon: 13.948892016
+  - id: 6666666
+    description: "Task 6"
+    priority: 1
+    location:
+      lat: 52.593034455
+      lon: 13.948992005

@@ -1,3 +1,4 @@
+use crate::Config;
 use common::time::now;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -25,20 +26,23 @@ impl AgentEntry {
     }
 }
 
-pub(crate) struct AgentStore {
+pub struct AgentStore {
+    ttl: u64,
     store: HashMap<u32, AgentEntry>,
 }
 
 impl AgentStore {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
+        let config = Config::new();
         AgentStore {
+            ttl: config.agent_ttl,
             store: HashMap::new(),
         }
     }
 
     // Cleanup expired sessions
-    pub(crate) fn cleanup(&mut self, ttl: u64) {
-        self.store.retain(|_, agent| agent.is_alive(ttl));
+    pub fn cleanup(&mut self) {
+        self.store.retain(|_, agent| agent.is_alive(self.ttl));
 
         info!(
             "Agent store cleaned up (total {} agents remaining).",
@@ -46,17 +50,17 @@ impl AgentStore {
         );
     }
 
-    pub(crate) fn insert(&mut self, agent_id: u32, addr: IpAddr) {
+    pub fn insert(&mut self, agent_id: u32, addr: IpAddr) {
         let agent = AgentEntry::new(agent_id, addr, now());
         self.store.insert(agent_id, agent);
 
         info!("Agent with id {agent_id} added.");
     }
 
-    pub(crate) fn get_alive_agents(&self, ttl: u64) -> Vec<AgentEntry> {
+    pub fn get_alive_agents(&self) -> Vec<AgentEntry> {
         self.store
             .values()
-            .filter(|agent| agent.is_alive(ttl))
+            .filter(|agent| agent.is_alive(self.ttl))
             .cloned()
             .collect()
     }
