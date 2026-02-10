@@ -21,6 +21,6 @@ pub async fn run() {
     if send().await.is_ok() {
         println!("'start cbba' command sent successfully.");
     } else {
-        println!("Tasks have been sent.");
+        println!("Failed to send 'start cbba' command.");
     }
 }

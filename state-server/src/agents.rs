@@ -1,6 +1,8 @@
-use crate::server::{StateServerContext, StateServerError};
+use crate::server::StateServerError;
 use agent_state::AgentEntry;
+use agent_state::SharedAgentState;
 use serde::Serialize;
+use std::sync::Arc;
 
 #[derive(Serialize)]
 pub(super) struct AgentsResponse {
@@ -9,7 +11,7 @@ pub(super) struct AgentsResponse {
 }
 
 pub(super) async fn handler(
-    state: &StateServerContext,
+    state: Arc<SharedAgentState>,
 ) -> Result<AgentsResponse, StateServerError> {
     let agent_store = state.agent_store.read().await;
     let agents = agent_store.get_alive_agents();

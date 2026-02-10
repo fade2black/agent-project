@@ -1,6 +1,8 @@
-use crate::server::{StateServerContext, StateServerError};
+use crate::server::StateServerError;
+use agent_state::SharedAgentState;
 use agent_state::Task;
 use serde::Serialize;
+use std::sync::Arc;
 
 #[derive(Serialize)]
 pub(super) struct TasksResponse {
@@ -8,7 +10,9 @@ pub(super) struct TasksResponse {
     tasks: Vec<Task>,
 }
 
-pub(super) async fn handler(state: &StateServerContext) -> Result<TasksResponse, StateServerError> {
+pub(super) async fn handler(
+    state: Arc<SharedAgentState>,
+) -> Result<TasksResponse, StateServerError> {
     let store = state.task_store.read().await;
     let tasks = store.get_tasks();
 

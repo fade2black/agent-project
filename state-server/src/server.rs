@@ -1,18 +1,12 @@
 use crate::agents::{self, AgentsResponse};
 use crate::tasks::{self, TasksResponse};
-use agent_state::{AgentStore, Config, TaskStore};
+use agent_state::Config;
+use agent_state::SharedAgentState;
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
 use tracing::info;
-
-#[derive(Clone)]
-pub struct StateServerContext {
-    pub agent_store: Arc<RwLock<AgentStore>>,
-    pub task_store: Arc<RwLock<TaskStore>>,
-}
 
 #[derive(Debug, Error)]
 pub enum StateServerError {
@@ -24,29 +18,41 @@ pub enum StateServerError {
 struct ErrorMessage(String);
 type ErrorResponse = (StatusCode, Json<ErrorMessage>);
 
-pub async fn start(state: StateServerContext) -> Result<(), StateServerError> {
-    let config = Config::new();
+pub struct StateServer {
+    config: Config,
+    agent_state: Arc<SharedAgentState>,
+}
 
-    let app = Router::new()
-        .route("/up", get(|| async { "OK" }))
-        .route("/agents", get(agents_action))
-        .route("/tasks", get(tasks_action))
-        .route("/config", get(config_action))
-        .with_state(state);
+impl StateServer {
+    pub fn new(config: Config, agent_state: Arc<SharedAgentState>) -> Self {
+        Self {
+            agent_state,
+            config,
+        }
+    }
 
-    let addr = format!("0.0.0.0:{}", config.http_port);
-    let listener = tokio::net::TcpListener::bind(addr.clone()).await?;
+    pub async fn start(&self) -> Result<(), StateServerError> {
+        let app = Router::new()
+            .route("/up", get(|| async { "OK" }))
+            .route("/agents", get(agents_action))
+            .route("/tasks", get(tasks_action))
+            .route("/config", get(config_action))
+            .with_state(self.agent_state.clone());
 
-    info!("Starting HTTP server on {} ...", addr);
-    axum::serve(listener, app).await?;
+        let addr = format!("0.0.0.0:{}", self.config.http_port);
+        let listener = tokio::net::TcpListener::bind(addr.clone()).await?;
 
-    Ok(())
+        info!("Starting HTTP server on {} ...", addr);
+        axum::serve(listener, app).await?;
+
+        Ok(())
+    }
 }
 
 async fn agents_action(
-    State(state): State<StateServerContext>,
+    State(state): State<Arc<SharedAgentState>>,
 ) -> Result<Json<AgentsResponse>, ErrorResponse> {
-    if let Ok(agents) = agents::handler(&state).await {
+    if let Ok(agents) = agents::handler(state.clone()).await {
         Ok(Json(agents))
     } else {
         Err(bad_request("Unable to fetch agents."))
@@ -54,9 +60,9 @@ async fn agents_action(
 }
 
 async fn tasks_action(
-    State(state): State<StateServerContext>,
+    State(state): State<Arc<SharedAgentState>>,
 ) -> Result<Json<TasksResponse>, ErrorResponse> {
-    if let Ok(tasks) = tasks::handler(&state).await {
+    if let Ok(tasks) = tasks::handler(state.clone()).await {
         Ok(Json(tasks))
     } else {
         Err(bad_request("Unable to fetch tasks."))
@@ -64,7 +70,7 @@ async fn tasks_action(
 }
 
 async fn config_action() -> Result<Json<Config>, ErrorResponse> {
-    Ok(Json(Config::new()))
+    Ok(Json(Config::from_env()))
 }
 
 fn bad_request(msg: &str) -> ErrorResponse {

@@ -2,6 +2,8 @@ use crate::task::TaskId;
 use common::time;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Winner {
@@ -33,6 +35,8 @@ pub struct CbbaGossip {
 pub struct Winners {
     winners: HashMap<TaskId, Winner>,
 }
+
+pub type SharedWinners = Arc<RwLock<Winners>>;
 
 impl Winners {
     pub fn new() -> Self {

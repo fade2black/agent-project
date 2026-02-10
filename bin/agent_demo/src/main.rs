@@ -1,39 +1,39 @@
-use agent_state::{AgentStore, TaskStore};
+use agent_state::{Config, SharedAgentState};
 use anyhow::Result;
-use state_server::StateServerContext;
+use control_server::ControlServer;
+use state_server::StateServer;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tracing::info;
+use udp_discovery::DiscoveryServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let config = Config::from_env();
+    let agent_state = Arc::new(SharedAgentState::new(config.agent_ttl));
+
+    let agent_store = agent_state.agent_store.clone();
+    let discovery_server = DiscoveryServer::new(config, agent_store);
+    let control_server = ControlServer::new(config, agent_state.clone());
+    let state_server = StateServer::new(config, agent_state.clone());
+
     tracing_subscriber::fmt::init();
-
     info!("Agent starting...");
-
-    let task_store = Arc::new(RwLock::new(TaskStore::new()));
-    let agent_store = Arc::new(RwLock::new(AgentStore::new()));
-
-    let state = StateServerContext {
-        task_store: task_store.clone(),
-        agent_store: agent_store.clone(),
-    };
 
     let mut tasks = JoinSet::<Result<()>>::new();
 
     tasks.spawn(async move {
-        udp_discovery::start(agent_store).await;
+        discovery_server.start().await;
         Ok(())
     });
 
     tasks.spawn(async move {
-        control_server::start(task_store).await?;
+        control_server.start().await?;
         Ok(())
     });
 
     tasks.spawn(async move {
-        state_server::start(state).await?;
+        state_server.start().await?;
         Ok(())
     });
 

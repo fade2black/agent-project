@@ -15,7 +15,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Self {
+    pub fn from_env() -> Self {
         Self {
             agent_id: get_env_var("AGENT_ID"),
             agent_ttl: get_env_var("AGENT_TTL"),

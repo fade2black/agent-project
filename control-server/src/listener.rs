@@ -1,13 +1,14 @@
 use crate::commands::DistributeTasks;
 use agent_state::Config;
-use agent_state::TaskStore;
+use agent_state::SharedAgentState;
 use bytes::Bytes;
+use cbba::CbbaRunner;
+use cbba::cbba_runner;
 use common::time::now;
 use common::{RmpSerializable, SerializationError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use transport::Transport;
 use udp_transport::UdpTransport;
@@ -18,6 +19,8 @@ const MAX_COMMAND_SIZE: usize = 1024;
 pub enum ControlCommandError {
     #[error("Transport error: {0}")]
     Transport(#[from] udp_transport::TransportError),
+    #[error("Cbba error: {0}")]
+    Cbba(#[from] cbba_runner::CbbaError),
     #[error("Serialization error: {0}")]
     Serialization(#[from] SerializationError),
     #[error("Wrong control command type")]
@@ -47,52 +50,84 @@ impl ControlCommand {
     }
 }
 
-pub async fn start(task_store: Arc<RwLock<TaskStore>>) -> Result<(), ControlCommandError> {
-    let config = Config::new();
-    let port = config.command_control_port;
+pub struct ControlServer {
+    config: Config,
+    agent_state: Arc<SharedAgentState>,
+}
 
-    let mut receiver = UdpTransport::new_receiver(port).await?;
-    let mut bytes = [0u8; MAX_COMMAND_SIZE];
+impl ControlServer {
+    pub fn new(config: Config, agent_state: Arc<SharedAgentState>) -> Self {
+        ControlServer {
+            agent_state,
+            config,
+        }
+    }
 
-    info!("Starting control command listener...");
+    pub async fn start(&self) -> Result<(), ControlCommandError> {
+        let port = self.config.command_control_port;
 
-    loop {
-        match receiver.recv(&mut bytes).await {
-            Ok(size) => {
-                let Ok(cmd) = ControlCommand::from_bytes(&bytes[..size]) else {
-                    warn!("Dropping invalid control command.");
+        let mut bytes = [0u8; MAX_COMMAND_SIZE];
+        let mut receiver = UdpTransport::new_receiver(port).await?;
+
+        info!("Starting control command listener...");
+
+        loop {
+            let size = match receiver.recv(&mut bytes).await {
+                Ok(size) => size,
+                Err(e) => {
+                    error!("Error receiving control command: {}", e);
                     continue;
-                };
+                }
+            };
 
-                info!("Received control command ({:?}).", cmd);
-                process_command(cmd, task_store.clone()).await?;
-            }
-            Err(e) => {
-                error!("Error receiving control command: {}", e);
+            let Some(cmd) = parse_control_command(&bytes[..size]) else {
                 continue;
+            };
+
+            match cmd.tp {
+                CommandType::StartCbba => {
+                    info!("Received start-cbba command.");
+                    self.start_cbba().await?;
+                }
+                CommandType::DistributeTasks => {
+                    info!("Received task distribution command.");
+                    self.distribute_tasks(cmd).await?;
+                }
             }
         }
+    }
+
+    async fn distribute_tasks(&self, cmd: ControlCommand) -> Result<(), ControlCommandError> {
+        let cmd = DistributeTasks::try_from(cmd)?;
+
+        let mut task_store = self.agent_state.task_store.write().await;
+        task_store.clear();
+        task_store.insert_tasks(cmd.tasks);
+        info!("New tasks added.");
+
+        Ok(())
+    }
+
+    pub async fn start_cbba(&self) -> Result<(), ControlCommandError> {
+        let agent_state_clone = self.agent_state.clone();
+        let cbba_runner = CbbaRunner::new(self.config, agent_state_clone);
+
+        let _ = tokio::spawn(async move {
+            if let Err(e) = cbba_runner.start().await {
+                error!("CBBA failed: {}", e);
+            }
+        });
+
+        Ok(())
     }
 }
 
-async fn process_command(
-    cmd: ControlCommand,
-    task_store: Arc<RwLock<TaskStore>>,
-) -> Result<(), ControlCommandError> {
-    match cmd.tp {
-        CommandType::StartCbba => {
-            info!("Received start-cbba command.");
-            //run_cbba_phase(state.clone()).await?;
-        }
-        CommandType::DistributeTasks => {
-            info!("Received task distribution command.");
-            let cmd = DistributeTasks::try_from(cmd)?;
-
-            let mut task_store = task_store.write().await;
-            task_store.clear();
-            task_store.insert_tasks(cmd.tasks);
-            info!("New tasks added.");
+fn parse_control_command(bytes: &[u8]) -> Option<ControlCommand> {
+    match ControlCommand::from_bytes(bytes) {
+        Ok(cmd) => Some(cmd),
+        Err(_) => {
+            warn!("Dropping invalid control command.");
+            None
         }
     }
-    Ok(())
 }

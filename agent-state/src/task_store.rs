@@ -1,10 +1,14 @@
 use crate::{Task, TaskContext, TaskId};
 use std::collections::{HashMap, hash_map::Entry};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::info;
 
 pub struct TaskStore {
     tasks: HashMap<TaskId, Task>,
 }
+
+pub type SharedTaskStore = Arc<RwLock<TaskStore>>;
 
 impl TaskStore {
     pub fn new() -> Self {

@@ -1,2 +1,2 @@
 mod discovery;
-pub use discovery::start;
+pub use discovery::DiscoveryServer;

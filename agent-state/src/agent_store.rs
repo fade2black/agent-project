@@ -1,8 +1,9 @@
-use crate::Config;
 use common::time::now;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Clone, Serialize)]
@@ -31,11 +32,12 @@ pub struct AgentStore {
     store: HashMap<u32, AgentEntry>,
 }
 
+pub type SharedAgentStore = Arc<RwLock<AgentStore>>;
+
 impl AgentStore {
-    pub fn new() -> Self {
-        let config = Config::new();
+    pub fn new(agent_ttl: u64) -> Self {
         AgentStore {
-            ttl: config.agent_ttl,
+            ttl: agent_ttl,
             store: HashMap::new(),
         }
     }

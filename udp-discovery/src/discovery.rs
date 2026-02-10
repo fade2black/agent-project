@@ -1,11 +1,9 @@
-use agent_state::{AgentStore, Config};
+use agent_state::{Config, SharedAgentStore};
 use common::RmpSerializable;
 use if_addrs::{IfAddr, get_if_addrs};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
 use tokio::{task::JoinSet, time::Duration};
 use tracing::{error, info};
 use transport::Transport;
@@ -35,25 +33,37 @@ impl HeartbeatMessage {
     }
 }
 
-pub async fn start(agent_store: Arc<RwLock<AgentStore>>) {
-    let mut tasks = JoinSet::new();
+pub struct DiscoveryServer {
+    config: Config,
+    agent_store: SharedAgentStore,
+}
 
-    tasks.spawn(send_heartbeat_task());
-    tasks.spawn(recv_heartbeat_task(agent_store.clone()));
-    tasks.spawn(cleanup_task(agent_store));
+impl DiscoveryServer {
+    pub fn new(config: Config, agent_store: SharedAgentStore) -> Self {
+        Self {
+            config,
+            agent_store,
+        }
+    }
 
-    while let Some(res) = tasks.join_next().await {
-        match res {
-            Ok(Err(e)) => error!("Error in task: {}", e),
-            Ok(Ok(())) => info!("Heartbeat task completed successfully"),
-            Err(e) => error!("Task panicked: {}", e),
+    pub async fn start(&self) {
+        let mut tasks = JoinSet::new();
+
+        tasks.spawn(send_heartbeat_task(self.config));
+        tasks.spawn(recv_heartbeat_task(self.config, self.agent_store.clone()));
+        tasks.spawn(cleanup_task(self.config, self.agent_store.clone()));
+
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(Err(e)) => error!("Error in task: {}", e),
+                Ok(Ok(())) => info!("Heartbeat task completed successfully"),
+                Err(e) => error!("Task panicked: {}", e),
+            }
         }
     }
 }
 
-async fn send_heartbeat_task() -> Result<(), DiscoveryError> {
-    let config = Config::new();
-
+async fn send_heartbeat_task(config: Config) -> Result<(), DiscoveryError> {
     let ips = retrieve_usable_ips()?;
     let duration = Duration::from_secs(config.discovery_interval);
     let mut sender = UdpTransport::new_sender(config.discovery_port).await?;
@@ -76,9 +86,10 @@ async fn send_heartbeat_task() -> Result<(), DiscoveryError> {
     }
 }
 
-async fn recv_heartbeat_task(agent_store: Arc<RwLock<AgentStore>>) -> Result<(), DiscoveryError> {
-    let config = Config::new();
-
+async fn recv_heartbeat_task(
+    config: Config,
+    agent_store: SharedAgentStore,
+) -> Result<(), DiscoveryError> {
     let port = config.discovery_port;
     let agent_id = config.agent_id;
 
@@ -104,9 +115,7 @@ async fn recv_heartbeat_task(agent_store: Arc<RwLock<AgentStore>>) -> Result<(),
     }
 }
 
-async fn cleanup_task(agent_store: Arc<RwLock<AgentStore>>) -> Result<(), DiscoveryError> {
-    let config = Config::new();
-
+async fn cleanup_task(config: Config, agent_store: SharedAgentStore) -> Result<(), DiscoveryError> {
     let interval = config.agent_cleanup_interval;
     let duration = Duration::from_secs(interval);
 
