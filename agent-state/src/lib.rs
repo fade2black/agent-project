@@ -1,15 +1,18 @@
 mod agent_store;
 mod bundle;
 mod config;
+mod control_state;
 mod location;
 mod shared_agent_state;
 mod task;
 mod task_store;
 pub mod telemetry;
 mod winner;
+
 pub use agent_store::{AgentEntry, AgentStore, SharedAgentStore};
 pub use bundle::{Bundle, SharedBundle};
 pub use config::Config;
+pub use control_state::{ControlState, SharedControlState};
 pub use location::Location;
 pub use shared_agent_state::SharedAgentState;
 pub use task::{Task, TaskContext, TaskId};

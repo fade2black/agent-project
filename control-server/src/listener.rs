@@ -1,5 +1,6 @@
 use crate::commands::DistributeTasks;
 use agent_state::Config;
+use agent_state::ControlState;
 use agent_state::SharedAgentState;
 use bytes::Bytes;
 use cbba::CbbaRunner;
@@ -98,6 +99,12 @@ impl ControlServer {
     }
 
     async fn distribute_tasks(&self, cmd: ControlCommand) -> Result<(), ControlCommandError> {
+        if !self.try_enter_state(ControlState::RunningDistTasks).await {
+            warn!("Cannot distribute tasks: agent busy.");
+            return Ok(());
+        }
+
+        let control_state = self.agent_state.control_state.clone();
         let cmd = DistributeTasks::try_from(cmd)?;
 
         let mut task_store = self.agent_state.task_store.write().await;
@@ -105,13 +112,21 @@ impl ControlServer {
         task_store.insert_tasks(cmd.tasks);
         info!("New tasks added.");
 
+        *control_state.write().await = ControlState::Idle;
+
         Ok(())
     }
 
-    pub async fn start_cbba(&self) -> Result<(), ControlCommandError> {
+    async fn start_cbba(&self) -> Result<(), ControlCommandError> {
+        if !self.try_enter_state(ControlState::RunningCBBA).await {
+            warn!("Cannot start CBBA: agent busy.");
+            return Ok(());
+        }
+
         let shared_bundle = self.agent_state.bundle.clone();
         let shared_winners = self.agent_state.winners.clone();
-        let tasks = self.agent_state.task_store.read().await.get_tasks();
+        let control_state = self.agent_state.control_state.clone();
+        let tasks = { self.agent_state.task_store.read().await.get_tasks() };
 
         let cbba_runner = CbbaRunner::new(self.config, shared_bundle, shared_winners, tasks);
 
@@ -119,9 +134,23 @@ impl ControlServer {
             if let Err(e) = cbba_runner.start().await {
                 error!("CBBA failed: {}", e);
             }
+
+            *control_state.write().await = ControlState::Idle;
         });
 
         Ok(())
+    }
+
+    // For just three states the following if-else is enough.
+    // However, for more states, another approach is needed.
+    async fn try_enter_state(&self, new_state: ControlState) -> bool {
+        let mut state = self.agent_state.control_state.write().await;
+        if *state == ControlState::Idle {
+            *state = new_state;
+            true
+        } else {
+            false
+        }
     }
 }
 
