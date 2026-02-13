@@ -1,15 +1,18 @@
 use agent_state::{
-    Bundle, CbbaGossip, Config, Location, SharedAgentState, TaskContext, Winner, Winners,
+    Bundle, CbbaGossip, Config, SharedBundle, SharedWinners, Task, TaskContext, TaskId, Winner,
+    Winners,
 };
-use bytes::BytesMut;
 use common::time::now;
 use common::{RmpSerializable, SerializationError};
-use std::sync::Arc;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use thiserror::Error;
 use tokio::time::{self, Duration};
 use tracing::{error, info, warn};
 use transport::Transport;
 use udp_transport::UdpTransport;
+
+const MAX_GOSSIP_SIZE: usize = 2048;
 
 #[derive(Debug, Error)]
 pub enum CbbaError {
@@ -28,14 +31,24 @@ enum ConflictDecision {
 
 pub struct CbbaRunner {
     config: Config,
-    agent_state: Arc<SharedAgentState>,
+    shared_bundle: SharedBundle,
+    shared_winners: SharedWinners,
+    tasks: HashMap<TaskId, Task>,
 }
 
 impl CbbaRunner {
-    pub fn new(config: Config, agent_state: Arc<SharedAgentState>) -> Self {
+    pub fn new(
+        config: Config,
+        shared_bundle: SharedBundle,
+        shared_winners: SharedWinners,
+        tasks: Vec<Task>,
+    ) -> Self {
+        let tasks = tasks.into_iter().map(|task| (task.id, task)).collect();
         Self {
-            agent_state,
             config,
+            shared_bundle,
+            shared_winners,
+            tasks,
         }
     }
 }
@@ -46,16 +59,16 @@ impl CbbaRunner {
         let cbba_timeout = self.config.cbba_timeout;
         let agent_id = self.config.agent_id;
 
-        let (mut bundle, mut winners) = self.create_cbb_state().await;
         let mut sender = UdpTransport::new_sender(port).await?;
         let mut receiver = UdpTransport::new_receiver(port).await?;
-        let mut bytes = BytesMut::new();
+        let mut bytes = [0u8; MAX_GOSSIP_SIZE];
 
         let timer = time::sleep(Duration::from_secs(cbba_timeout));
         tokio::pin!(timer);
 
         info!("⚙️ Starting CBBA process...");
 
+        let (mut bundle, mut winners) = self.init_bundle_and_winners();
         // Send initial gossip
         let gossip = winners.to_gossip(agent_id);
         send_gossip(&mut sender, &gossip).await?;
@@ -71,19 +84,15 @@ impl CbbaRunner {
                         }
                     };
 
-                    info!("Received gossip ({} bytes).", size);
-
                     let Ok(gossip) = CbbaGossip::from_bytes(&bytes[..size]) else {
                         warn!("Dropping invalid gossip.");
                         continue;
                     };
 
-                    info!("Received gossip: {:?}", gossip);
-                    if self.process_gossip(&mut bundle, &mut winners, &gossip) {
+                    if process_gossip(agent_id, &mut bundle, &mut winners, &gossip) {
+                        self.rebid_and_sort(&mut bundle, &mut winners);
                         let gossip = winners.to_gossip(agent_id);
                         send_gossip(&mut sender, &gossip).await?;
-                    } else {
-                        info!("No changes in bundle or winners.");
                     }
                 },
                 _ = &mut timer => {
@@ -94,79 +103,133 @@ impl CbbaRunner {
         }
 
         // Update the agent state with the new bundle and winners
-        let mut prev_bundle = self.agent_state.bundle.write().await;
-        let mut prev_winners = self.agent_state.winners.write().await;
-        *prev_bundle = bundle;
-        *prev_winners = winners;
+        let mut shared_bundle = self.shared_bundle.write().await;
+        let mut shared_winners = self.shared_winners.write().await;
+
+        *shared_bundle = bundle;
+        *shared_winners = winners;
+
+        info!("Bundle and winners updated.");
 
         Ok(())
     }
 
-    async fn create_cbb_state(&self) -> (Bundle, Winners) {
+    fn init_bundle_and_winners(&self) -> (Bundle, Winners) {
         let mut bundle = Bundle::new();
         let mut winners = Winners::new();
 
-        let task_store = self.agent_state.task_store.read().await;
-        let ctx = create_task_context(task_store.tasks_count());
-
-        // Compute initial bids and initialize the bundle and winners
-        let bids = task_store.compute_local_bids(&ctx);
-        bundle.replace(bids.keys().cloned().collect());
-        winners.init(self.config.agent_id, bids);
+        bundle.replace(self.tasks.keys().cloned().collect());
+        self.rebid_and_sort(&mut bundle, &mut winners);
 
         (bundle, winners)
     }
 
-    /// If bundle or winners changed, return true, false otherwise
-    fn process_gossip(
-        &self,
-        bundle: &mut Bundle,
-        winners: &mut Winners,
-        gossip: &CbbaGossip,
-    ) -> bool {
+    /// Rebids tasks in the bundle
+    fn rebid_and_sort(&self, bundle: &mut Bundle, winners: &mut Winners) {
         let agent_id = self.config.agent_id;
+        // Step 1
+        let mut tasks_with_bids = self.build_tasks_with_bids(bundle);
+        // Step 2
+        tasks_with_bids.sort_by(|a, b| match (a.1.is_finite(), b.1.is_finite()) {
+            (true, true) => {
+                if a.1 < b.1 {
+                    Ordering::Greater
+                } else if a.1 > b.1 {
+                    Ordering::Less
+                } else {
+                    Ordering::Equal
+                }
+            }
+            (false, true) => {
+                error!("Task {} has invalid bid", a.0);
+                Ordering::Greater
+            }
+            (true, false) => {
+                error!("Task {} has invalid bid", b.0);
+                Ordering::Less
+            }
+            (false, false) => {
+                error!("Both Task {} and Task {} have invalid bids", a.0, b.0);
+                Ordering::Equal
+            }
+        });
 
-        info!("Processing Gossip: {:?}", gossip);
-
-        if agent_id == gossip.agent_id {
-            return false;
+        // Step 3: clear current bundle and rebuild in sorted order
+        bundle.clear();
+        for (task_id, bid) in tasks_with_bids {
+            bundle.insert(task_id);
+            winners.insert(task_id, agent_id, bid, now()); // fresh timestamp
         }
+    }
 
-        let mut bundle_changed = false;
+    /// Build a vector of tasks in Bundle with their bids
+    fn build_tasks_with_bids(&self, bundle: &Bundle) -> Vec<(TaskId, f64)> {
+        let ctx = TaskContext::new(self.tasks.len());
+        bundle
+            .task_ids()
+            .iter()
+            .map(|task_id| {
+                let task = self.tasks.get(task_id).expect("Failed to fetch task");
+                let bid = calculate_task_bid(&ctx, &task);
+                (*task_id, bid)
+            })
+            .collect()
+    }
+}
 
-        // Loop through the winners in the received gossip
-        for remote in gossip.winners.iter() {
-            let task_id = remote.task_id;
+/// If bundle or winners changed, return true, false otherwise
+fn process_gossip(
+    agent_id: u32,
+    bundle: &mut Bundle,
+    winners: &mut Winners,
+    gossip: &CbbaGossip,
+) -> bool {
+    if agent_id == gossip.agent_id {
+        return false;
+    }
 
-            if let Some(local) = winners.get(task_id) {
-                if remote.agent_id == agent_id {
-                    continue; // Dude! We've already agreed!
-                }
+    let mut bundle_changed = false;
 
-                match compare(&remote, &local) {
-                    ConflictDecision::RemoteWins => {
-                        bundle.remove(task_id);
-                        winners.insert(task_id, remote.agent_id, remote.bid, now());
-                    }
-                    ConflictDecision::LocalWins => {
-                        bundle.insert(task_id);
-                        winners.insert(task_id, local.agent_id, local.bid, now());
-                    }
-                }
+    // Loop through the winners in the received gossip
+    for remote in gossip.winners.iter() {
+        let task_id = remote.task_id;
 
-                bundle_changed = true;
-            } else {
-                info!(
-                    "Agent does not have a local winner for the task {}. Potential inconsistency in the task store.",
-                    task_id
-                );
-                winners.insert(task_id, remote.agent_id, remote.bid, now());
+        if let Some(local) = winners.get(task_id) {
+            if remote.agent_id == agent_id {
+                continue; // Dude! We've already agreed!
+            }
+
+            let winner = match compare(remote, local) {
+                ConflictDecision::RemoteWins => remote,
+                ConflictDecision::LocalWins => local,
+            };
+
+            let was_in_bundle = bundle.contains(task_id);
+            if winner.agent_id == agent_id {
+                bundle.insert(task_id);
+            } else if was_in_bundle {
+                bundle.truncate_after(task_id);
+            }
+
+            winners.insert(task_id, winner.agent_id, winner.bid, winner.ts);
+
+            let now_in_bundle = bundle.contains(task_id);
+            if was_in_bundle != now_in_bundle {
                 bundle_changed = true;
             }
-        }
+        } else {
+            info!(
+                "Agent does not have a local winner for the task {}. Potential inconsistency in the task store.",
+                task_id
+            );
 
-        bundle_changed
+            bundle.remove(task_id);
+            winners.insert(task_id, remote.agent_id, remote.bid, remote.ts);
+            bundle_changed = true;
+        }
     }
+
+    bundle_changed
 }
 
 fn compare(remote: &Winner, local: &Winner) -> ConflictDecision {
@@ -193,18 +256,16 @@ fn compare(remote: &Winner, local: &Winner) -> ConflictDecision {
     ConflictDecision::LocalWins
 }
 
-fn create_task_context(task_count: usize) -> TaskContext {
-    TaskContext {
-        task_count,
-        task_count_weight: 0.75,
-        agent_location: Location { lat: 0.0, lon: 0.0 },
-        energy: 100.0,
-    }
+fn calculate_task_bid(ctx: &TaskContext, task: &Task) -> f64 {
+    let distance = ctx.agent_location.distance_to(&task.location);
+    let distance_score = 1.0 + distance;
+    let task_penalty = 1.0 + ctx.task_count as f64 * ctx.task_count_weight;
+    let priority = task.priority as f64;
+    1000.0 * (ctx.energy * priority) / (task_penalty * distance_score)
 }
 
 async fn send_gossip(sender: &mut UdpTransport, gossip: &CbbaGossip) -> Result<(), CbbaError> {
     let bytes = gossip.to_bytes()?;
-    info!("Sending Gossip: {:?}", gossip);
     sender.send(&bytes).await?;
 
     Ok(())
@@ -214,28 +275,11 @@ async fn send_gossip(sender: &mut UdpTransport, gossip: &CbbaGossip) -> Result<(
 mod tests {
     use super::*;
 
-    fn create_test_config(agent_id: u32) -> Config {
-        Config {
-            agent_id,
-            agent_ttl: 10,
-            discovery_interval: 10,
-            discovery_port: 4000,
-            cbba_port: 4001,
-            cbba_timeout: 30,
-            command_control_port: 4002,
-            agent_cleanup_interval: 10,
-            http_port: 8000,
-        }
-    }
-
-    fn setup(agent_id: u32) -> (CbbaRunner, Bundle, Winners) {
+    fn setup() -> (Bundle, Winners) {
         let bundle = Bundle::new();
         let winners = Winners::new();
-        let config = create_test_config(agent_id);
-        let agent_state = Arc::new(SharedAgentState::new(config.agent_ttl));
-        let runner = CbbaRunner::new(config, agent_state);
 
-        (runner, bundle, winners)
+        (bundle, winners)
     }
 
     // Test that the state has changed because the local agent wins the task.
@@ -251,7 +295,7 @@ mod tests {
         let lower_bid = bid - 1.0;
         let ts = 10;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         winners.insert(task_id, local_agent_id, bid, ts);
         // Remote gossip
@@ -265,7 +309,7 @@ mod tests {
             }],
         };
 
-        let changed = cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        let changed = process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
         assert!(changed, "state should be marked as changed");
 
         let winner = winners.get(task_id).expect("winner missing");
@@ -289,7 +333,7 @@ mod tests {
         let higher_bid = bid + 5.0;
         let ts = 10; // timestamp
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         bundle.replace(vec![task_id]);
         winners.insert(task_id, local_agent_id, bid, ts);
@@ -305,7 +349,7 @@ mod tests {
             }],
         };
 
-        let changed = cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        let changed = process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
         assert!(changed, "state should be marked as changed");
 
         let winner = winners.get(task_id).expect("winner missing");
@@ -331,7 +375,7 @@ mod tests {
         let local_ts = 100;
         let remote_ts = 200;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         bundle.insert(task_id);
         winners.insert(task_id, local_agent_id, higher_bid, local_ts);
@@ -346,7 +390,7 @@ mod tests {
             }],
         };
 
-        cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
 
         assert!(bundle.contains(task_id), "Task must remain in bundle");
 
@@ -367,7 +411,7 @@ mod tests {
         let local_ts = 100;
         let remote_ts = 200;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         bundle.insert(task_id);
         winners.insert(task_id, local_agent_id, bid, local_ts);
@@ -382,7 +426,7 @@ mod tests {
             }],
         };
 
-        let changed = cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        let changed = process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
         assert!(changed, "Newer timestamp with equal bids must change state");
 
         assert!(!bundle.contains(task_id), "Task must ne removed");
@@ -402,7 +446,7 @@ mod tests {
         let bid = 12.0;
         let ts = 100;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         bundle.insert(task_id);
         winners.insert(task_id, local_agent_id, bid, ts);
@@ -417,7 +461,7 @@ mod tests {
             }],
         };
 
-        cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
 
         assert!(bundle.contains(task_id), "Task remain in the local bundle");
 
@@ -435,7 +479,7 @@ mod tests {
         let bid = 12.0;
         let ts = 100;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         let gossip = CbbaGossip {
             agent_id: remote_agent_id,
@@ -447,7 +491,7 @@ mod tests {
             }],
         };
 
-        let changed = cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        let changed = process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
 
         assert!(changed, "A new winner for local agent must change state");
         assert!(
@@ -469,7 +513,7 @@ mod tests {
         let bid = 12.0;
         let ts = 100;
 
-        let (cbba_runner, mut bundle, mut winners) = setup(local_agent_id);
+        let (mut bundle, mut winners) = setup();
 
         let gossip = CbbaGossip {
             agent_id: local_agent_id,
@@ -481,7 +525,7 @@ mod tests {
             }],
         };
 
-        let changed = cbba_runner.process_gossip(&mut bundle, &mut winners, &gossip);
+        let changed = process_gossip(local_agent_id, &mut bundle, &mut winners, &gossip);
         assert!(!changed, "State must NOT change");
     }
 }

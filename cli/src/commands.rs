@@ -5,7 +5,7 @@ pub fn build_command() -> Command {
         .version("1.0")
         .author("Bayram <bkuliyev@gmail.com>")
         .about("Agent client.")
-        .subcommand(Command::new("start-cbba").about("Start the CBBA process."))
+        .subcommand(Command::new("cbba").about("Start the CBBA process."))
         .subcommand(
             Command::new("send-cbba-gossip")
                 .about("Send a CBBA gossip on behalf of an agent.")
@@ -19,7 +19,7 @@ pub fn build_command() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("distribute-tasks")
+            Command::new("dist")
                 .about("Distribute tasks to agents")
                 .arg(
                     Arg::new("file")

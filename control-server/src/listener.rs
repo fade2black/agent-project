@@ -109,8 +109,11 @@ impl ControlServer {
     }
 
     pub async fn start_cbba(&self) -> Result<(), ControlCommandError> {
-        let agent_state_clone = self.agent_state.clone();
-        let cbba_runner = CbbaRunner::new(self.config, agent_state_clone);
+        let shared_bundle = self.agent_state.bundle.clone();
+        let shared_winners = self.agent_state.winners.clone();
+        let tasks = self.agent_state.task_store.read().await.get_tasks();
+
+        let cbba_runner = CbbaRunner::new(self.config, shared_bundle, shared_winners, tasks);
 
         let _ = tokio::spawn(async move {
             if let Err(e) = cbba_runner.start().await {

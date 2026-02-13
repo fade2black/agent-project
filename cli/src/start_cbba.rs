@@ -19,8 +19,8 @@ async fn send() -> Result<()> {
 
 pub async fn run() {
     if send().await.is_ok() {
-        println!("'start cbba' command sent successfully.");
+        println!("Command sent successfully.");
     } else {
-        println!("Failed to send 'start cbba' command.");
+        println!("Failed to send the command.");
     }
 }

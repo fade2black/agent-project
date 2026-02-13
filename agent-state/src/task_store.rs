@@ -1,4 +1,4 @@
-use crate::{Task, TaskContext, TaskId};
+use crate::{Task, TaskId};
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -49,17 +49,6 @@ impl TaskStore {
 
     pub fn clear(&mut self) {
         self.tasks.clear();
-    }
-
-    pub fn compute_local_bids(&self, ctx: &TaskContext) -> HashMap<TaskId, f64> {
-        let mut bids = HashMap::new();
-
-        for (task_id, task) in &self.tasks {
-            let bid = task.calculate_task_bid(ctx);
-            bids.insert(*task_id, bid);
-        }
-
-        bids
     }
 }
 

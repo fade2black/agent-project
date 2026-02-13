@@ -65,9 +65,9 @@ pub async fn run(matches: &ArgMatches) -> Result<()> {
     let tasks = tasks_file.tasks.into_iter().map(Task::from).collect();
 
     if send(tasks).await.is_ok() {
-        println!("'start cbba' command sent successfully.");
+        println!("Command sent successfully.");
     } else {
-        println!("Failed to send 'start cbba' command.");
+        println!("Failed to send the command.");
     }
 
     Ok(())

@@ -12,10 +12,10 @@ async fn main() -> Result<()> {
 
     if let Some((cmd_name, matches)) = matches.subcommand() {
         match cmd_name {
-            "distribute-tasks" => {
+            "dist" => {
                 distribute_tasks::run(&matches).await?;
             }
-            "start-cbba" => {
+            "cbba" => {
                 start_cbba::run().await;
             }
             "send-cbba-gossip" => {

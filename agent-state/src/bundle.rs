@@ -1,10 +1,11 @@
 use crate::task::TaskId;
-use std::collections::HashSet;
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[derive(Serialize)]
 pub struct Bundle {
-    tasks: HashSet<TaskId>,
+    task_ids: Vec<TaskId>,
 }
 
 pub type SharedBundle = Arc<RwLock<Bundle>>;
@@ -12,24 +13,46 @@ pub type SharedBundle = Arc<RwLock<Bundle>>;
 impl Bundle {
     pub fn new() -> Self {
         Self {
-            tasks: HashSet::new(),
+            task_ids: Vec::new(),
         }
     }
 
-    pub fn remove(&mut self, task_id: TaskId) -> bool {
-        self.tasks.remove(&task_id)
+    pub fn remove(&mut self, task_id: TaskId) {
+        if let Some(pos) = self.task_ids.iter().position(|&t| t == task_id) {
+            self.task_ids.remove(pos);
+        }
     }
 
     pub fn contains(&self, task_id: TaskId) -> bool {
-        self.tasks.contains(&task_id)
+        self.task_ids.contains(&task_id)
     }
 
     pub fn insert(&mut self, task_id: TaskId) {
-        self.tasks.insert(task_id);
+        if !self.contains(task_id) {
+            self.task_ids.push(task_id);
+        }
     }
 
     pub fn replace(&mut self, task_ids: Vec<TaskId>) {
-        self.tasks.clear();
-        self.tasks.extend(task_ids);
+        self.task_ids.clear();
+        self.task_ids.extend(task_ids);
+    }
+
+    pub fn truncate_after(&mut self, lost_task: TaskId) {
+        if let Some(pos) = self.task_ids.iter().position(|&t| t == lost_task) {
+            self.task_ids.truncate(pos);
+        }
+    }
+
+    pub fn task_ids(&self) -> Vec<TaskId> {
+        self.task_ids.iter().cloned().collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.task_ids.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.task_ids.len()
     }
 }

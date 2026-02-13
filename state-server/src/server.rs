@@ -1,7 +1,8 @@
 use crate::agents::{self, AgentsResponse};
+use crate::bundle::{self, BundleResponse};
 use crate::tasks::{self, TasksResponse};
-use agent_state::Config;
-use agent_state::SharedAgentState;
+use crate::winners::{self, WinnersResponse};
+use agent_state::{Config, SharedAgentState, Telemetry};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
@@ -35,8 +36,11 @@ impl StateServer {
         let app = Router::new()
             .route("/up", get(|| async { "OK" }))
             .route("/agents", get(agents_action))
+            .route("/bundle", get(bundle_action))
+            .route("/winners", get(winners_action))
             .route("/tasks", get(tasks_action))
             .route("/config", get(config_action))
+            .route("/telemetry", get(telemetry_action))
             .with_state(self.agent_state.clone());
 
         let addr = format!("0.0.0.0:{}", self.config.http_port);
@@ -69,8 +73,32 @@ async fn tasks_action(
     }
 }
 
+async fn bundle_action(
+    State(state): State<Arc<SharedAgentState>>,
+) -> Result<Json<BundleResponse>, ErrorResponse> {
+    if let Ok(bundle) = bundle::handler(state.clone()).await {
+        Ok(Json(bundle))
+    } else {
+        Err(bad_request("Unable to fetch bundle."))
+    }
+}
+
+async fn winners_action(
+    State(state): State<Arc<SharedAgentState>>,
+) -> Result<Json<WinnersResponse>, ErrorResponse> {
+    if let Ok(winners) = winners::handler(state.clone()).await {
+        Ok(Json(winners))
+    } else {
+        Err(bad_request("Unable to fetch winners."))
+    }
+}
+
 async fn config_action() -> Result<Json<Config>, ErrorResponse> {
     Ok(Json(Config::from_env()))
+}
+
+async fn telemetry_action() -> Result<Json<Telemetry>, ErrorResponse> {
+    Ok(Json(Telemetry::new()))
 }
 
 fn bad_request(msg: &str) -> ErrorResponse {

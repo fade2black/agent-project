@@ -63,6 +63,14 @@ impl Winners {
         self.winners.get(&task_id)
     }
 
+    pub fn get_winners(&self) -> Vec<Winner> {
+        self.winners.values().cloned().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.winners.len()
+    }
+
     pub fn insert(&mut self, task_id: u32, agent_id: u32, bid: f64, ts: u64) {
         self.winners.insert(
             task_id,
