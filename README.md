@@ -119,16 +119,14 @@ fn process_gossip(bundle, winners, gossip) {
   
   // Loop on winners received as the gossip
   for remote in gossip.winners {
+    let task_id = remote.task_id;
+    
     local = winners.get(task_id);
     
-    if local is present {
-      if remote.agent_id == local.agent_id {
-        continue; // We've already agreed on this task
-      }
-      
-      let result = compare(remote, local);
+    if local is present {  
       let winner;
       
+      let result = compare(remote, local);
       if result == LocalWins {
         winner = local;
       } else {
