@@ -195,7 +195,7 @@ fn process_gossip(
         let task_id = remote.task_id;
 
         if let Some(local) = winners.get(task_id) {
-            if remote.agent_id == agent_id {
+            if remote.agent_id == local.agent_id {
                 continue; // Dude! We've already agreed!
             }
 
