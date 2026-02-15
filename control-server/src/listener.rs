@@ -128,11 +128,22 @@ impl ControlServer {
         let control_state = self.agent_state.control_state.clone();
         let tasks = { self.agent_state.task_store.read().await.get_tasks() };
 
-        let cbba_runner = CbbaRunner::new(self.config, shared_bundle, shared_winners, tasks);
+        let cbba_runner = CbbaRunner::new(self.config, tasks);
 
         let _ = tokio::spawn(async move {
-            if let Err(e) = cbba_runner.start().await {
-                error!("CBBA failed: {}", e);
+            match cbba_runner.start().await {
+                Ok((bundle, winners)) => {
+                    let mut shared_bundle = shared_bundle.write().await;
+                    let mut shared_winners = shared_winners.write().await;
+
+                    *shared_bundle = bundle;
+                    *shared_winners = winners;
+
+                    info!("Bundle and winners updated.");
+                }
+                Err(e) => {
+                    error!("CBBA failed: {}", e);
+                }
             }
 
             *control_state.write().await = ControlState::Idle;

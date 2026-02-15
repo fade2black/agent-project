@@ -1,7 +1,4 @@
-use agent_state::{
-    Bundle, CbbaGossip, Config, SharedBundle, SharedWinners, Task, TaskContext, TaskId, Winner,
-    Winners,
-};
+use agent_state::{Bundle, CbbaGossip, Config, Task, TaskContext, TaskId, Winner, Winners};
 use common::time::now;
 use common::{RmpSerializable, SerializationError};
 use std::cmp::Ordering;
@@ -31,30 +28,18 @@ enum ConflictDecision {
 
 pub struct CbbaRunner {
     config: Config,
-    shared_bundle: SharedBundle,
-    shared_winners: SharedWinners,
     tasks: HashMap<TaskId, Task>,
 }
 
 impl CbbaRunner {
-    pub fn new(
-        config: Config,
-        shared_bundle: SharedBundle,
-        shared_winners: SharedWinners,
-        tasks: Vec<Task>,
-    ) -> Self {
+    pub fn new(config: Config, tasks: Vec<Task>) -> Self {
         let tasks = tasks.into_iter().map(|task| (task.id, task)).collect();
-        Self {
-            config,
-            shared_bundle,
-            shared_winners,
-            tasks,
-        }
+        Self { config, tasks }
     }
 }
 
 impl CbbaRunner {
-    pub async fn start(&self) -> Result<(), CbbaError> {
+    pub async fn start(&self) -> Result<(Bundle, Winners), CbbaError> {
         let port = self.config.cbba_port;
         let cbba_timeout = self.config.cbba_timeout;
         let agent_id = self.config.agent_id;
@@ -102,16 +87,7 @@ impl CbbaRunner {
             }
         }
 
-        // Update the agent state with the new bundle and winners
-        let mut shared_bundle = self.shared_bundle.write().await;
-        let mut shared_winners = self.shared_winners.write().await;
-
-        *shared_bundle = bundle;
-        *shared_winners = winners;
-
-        info!("Bundle and winners updated.");
-
-        Ok(())
+        Ok((bundle, winners))
     }
 
     fn init_bundle_and_winners(&self) -> (Bundle, Winners) {
