@@ -1,5 +1,6 @@
 use crate::agents::{self, AgentsResponse};
 use crate::bundle::{self, BundleResponse};
+use crate::control_state::{self, ControlStateResponse};
 use crate::tasks::{self, TasksResponse};
 use crate::winners::{self, WinnersResponse};
 use agent_state::{Config, SharedAgentState, Telemetry};
@@ -40,6 +41,7 @@ impl StateServer {
             .route("/winners", get(winners_action))
             .route("/tasks", get(tasks_action))
             .route("/config", get(config_action))
+            .route("/state", get(state_action))
             .route("/telemetry", get(telemetry_action))
             .with_state(self.agent_state.clone());
 
@@ -95,6 +97,16 @@ async fn winners_action(
 
 async fn config_action() -> Result<Json<Config>, ErrorResponse> {
     Ok(Json(Config::from_env()))
+}
+
+async fn state_action(
+    State(state): State<Arc<SharedAgentState>>,
+) -> Result<Json<ControlStateResponse>, ErrorResponse> {
+    if let Ok(control_state) = control_state::handler(state.clone()).await {
+        Ok(Json(control_state))
+    } else {
+        Err(bad_request("Unable to fetch control state."))
+    }
 }
 
 async fn telemetry_action() -> Result<Json<Telemetry>, ErrorResponse> {
